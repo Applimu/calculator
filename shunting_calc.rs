@@ -2,8 +2,6 @@
 Todo:
 [ ] - Turn some Option< >s into Result< >s 
         - (figure out how Result works in rust)
-[X] - Create 'bytecode' to differentiate from tokens
-[ ] - Actually implement shunting yard algorithm
 */
 
 
@@ -246,7 +244,7 @@ fn shunting(tokens: &Vec<Token>) -> Option<Vec<Executable>> {
 
 fn eval(stack:&Vec<Executable>) -> Option<Value> {
     //evaluates a stack
-    // all tokens *must* be in reverse polish notation 3 5 +
+    //Executables *must* be in reverse polish notation 3 5 +
     let mut evalvec:Vec<Value> = Vec::new();
     
     for op in stack.iter() {
