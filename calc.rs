@@ -1,19 +1,34 @@
 /*
-Todo:
-[ ] - Turn some Option< >s into Result< >s 
-        - (figure out how Result works in rust)
+Features to add:
+unary operations:
+[ ] - negate
+        - (idk how to diff between negation and subtraction)
+[ ] - not (!)
+[ ] - normalize?? truthy?? idk lets use T
+
+binary operations:
+[ ] - and (&&)
+[ ] - or (||)
+[ ] - xor (#)
+[x] - exponentiation (^)
+[x] - integer division (//)
+
+modular arithmetic options:
+set modulus
+modular multiplicative inverse
+
 */
-
-
 type Value = i32;
 
-
+#[allow(non_camel_case_types)]
 #[derive(PartialEq,Eq,Clone,Copy,Debug)]
 enum Bop {
     ADD,
     MUL,
     SUB,
     MOD,
+    DIV,
+    EXP,
 }
 
 impl Bop {
@@ -24,6 +39,8 @@ impl Bop {
             Bop::MUL => 15,
             Bop::SUB => 10,
             Bop::MOD => 5,
+            Bop::DIV => 15,
+            Bop::EXP => 20,
         } 
     }
 
@@ -33,11 +50,14 @@ impl Bop {
             Bop::MUL => true,
             Bop::SUB => false,
             Bop::MOD => false,
+            Bop::DIV => false,
+            Bop::EXP => false,
         }
     }
 }
 
 #[derive(Debug)]
+#[allow(non_camel_case_types)]
 enum Token {
     LIT(Value),
     BOP(Bop),
@@ -46,6 +66,7 @@ enum Token {
 }
 
 #[derive(Debug)]
+#[allow(non_camel_case_types)]
 enum Executable {
     NOP,
     LIT(Value),
@@ -60,8 +81,7 @@ struct StrMach {
 }
 
 impl StrMach {
-
-    fn new(stringy:String) -> StrMach {
+    fn from(stringy:String) -> StrMach {
         let text = stringy.into_bytes();
         let length = text.len();
         StrMach {
@@ -95,14 +115,23 @@ impl Iterator for StrMach {
     }
 }
 
+macro_rules! break_if_none {
+    ($x:expr) => {
+        match $x {
+            Some(xpassed) => xpassed,
+            None => break,
+        }
+    };
+}
+
+
 fn getnum(iter: &mut StrMach,base:Value) -> Option<Token> {
+    // parses an integer literal when pointing to the first / largest character of the literal
     let mut lit: Value = 0;
 
     loop {
-        let n = match iter.next(){
-            Some(x) => x,
-            None => break,
-        };
+        // Using a for loop takes possession of it and a ? returns it :/
+        let n = break_if_none!(iter.next());
 
         let digit = match n {
             b'0' => 0,
@@ -131,46 +160,75 @@ fn getnum(iter: &mut StrMach,base:Value) -> Option<Token> {
     Some(Token::LIT(lit))
 }
 
-fn lex_str(mut iter: StrMach) -> Vec<Token> {
+#[allow(non_camel_case_types)]
+#[derive(Debug)]
+enum LexErr {
+    BAD_CHAR(u8),
+    FAILED_NUM_LIT,
+}
+
+
+fn lex_str(mut iter: StrMach) -> Result<Vec<Token>,LexErr> {
     
 
     let mut stack: Vec<Token> = Vec::new();
 
     
     loop {
-        let c = match iter.next() {
-            Some(x) => x,
-            None => break,
-        };
+        // Using a for loop takes possession of it and a ? returns it :/
+        let c = break_if_none!(iter.next());
 
         match c {
             // number literals
-            b'b' => stack.push(getnum(&mut iter,2).expect("Failed to parse binary literal")),
-            b'd' => stack.push(getnum(&mut iter,10).expect("Failed to parse decimal literal")),
-            b'x' => stack.push(getnum(&mut iter,16).expect("Failed to parse hexadecimal literal")),
-            b'0'..=b'9' | b'a'..=b'f' => {
+            b'b' => match getnum(&mut iter,2) {
+                Some(x) => stack.push(x),
+                None => return Err(LexErr::FAILED_NUM_LIT),
+            },
+            b'd' => match getnum(&mut iter,10) {
+                Some(x) => stack.push(x),
+                None => return Err(LexErr::FAILED_NUM_LIT),
+            },
+            b'x' => match getnum(&mut iter,16) {
+                Some(x) => stack.push(x),
+                None => return Err(LexErr::FAILED_NUM_LIT),
+            },
+            b'0'..=b'9' => {
                 iter.pause();
-                stack.push(getnum(&mut iter,10).expect("Failed to parse decimal literal"))
+                match getnum(&mut iter,10) {
+                    Some(x) => stack.push(x),
+                    None => return Err(LexErr::FAILED_NUM_LIT),
+                }
             },
             // binary operations
             b'+' => stack.push(Token::BOP(Bop::ADD)),
             b'*' => stack.push(Token::BOP(Bop::MUL)),
             b'-' => stack.push(Token::BOP(Bop::SUB)),
             b'%' => stack.push(Token::BOP(Bop::MOD)),
+            b'/' => {
+                if let Some(x) = iter.next() {
+                    if x != b'/' {
+                        return Err(LexErr::BAD_CHAR(x))
+                    }
+                } else {
+                    return Err(LexErr::BAD_CHAR(b'/'))
+                };
+                stack.push(Token::BOP(Bop::DIV))
+            },
+            b'^' => stack.push(Token::BOP(Bop::EXP)),
             // parenthesis
             b'(' => stack.push(Token::PAO),
             b')' => stack.push(Token::PAC),
             // whitespace handling
             b' '|b'\t' => (),
             b'\n'|b'\r'=> break,
-            _ => {
-                todo!();
+            other => {
+                return Err(LexErr::BAD_CHAR(other))
             },
 
         };
     }
 
-    return stack;
+    Ok(stack)
 }
 
 #[derive(PartialEq,Eq,Debug)]
@@ -188,7 +246,14 @@ impl Shunt {
     }
 }
 
-fn shunting(tokens: &Vec<Token>) -> Option<Vec<Executable>> {
+#[derive(Debug)]
+#[allow(non_camel_case_types)]
+enum ParseErr {
+    UNCLOSED_PARENS,
+}
+
+
+fn shunting(tokens: &Vec<Token>) -> Result<Vec<Executable>, ParseErr> {
     let mut opstack: Vec<Shunt> = Vec::new();
     let mut exestack: Vec<Executable> = Vec::new();
 
@@ -202,17 +267,16 @@ fn shunting(tokens: &Vec<Token>) -> Option<Vec<Executable>> {
                     
                 // I am well aware this is a mess and i am sorry
                 loop {
-                    match opstack.last() {
-                        Some(shuntop) => match shuntop {
+                        match break_if_none!(opstack.last()) {
                             Shunt::BOP(o2) => {
                                if (o2.prec() <= o1.prec()) && ((o2.prec() != o1.prec()) || o1.is_rassoc())
                                     {break}
                             },
                             Shunt::PAO => break,
                         }
-                        None => break,
-                    };
+                    
                     exestack.push(opstack.pop().unwrap().to_exe());
+                    // this .pop is guarrenteed to never panic
                 }
                 opstack.push(Shunt::BOP(o1));
             },
@@ -224,7 +288,7 @@ fn shunting(tokens: &Vec<Token>) -> Option<Vec<Executable>> {
                 while mbthis != Some(Shunt::PAO) {
                     match mbthis {
                         Some(this) => exestack.push(this.to_exe()),
-                        None => return None,
+                        None => return Err(ParseErr::UNCLOSED_PARENS),
                     }
                     mbthis = opstack.pop()
                 }
@@ -232,38 +296,50 @@ fn shunting(tokens: &Vec<Token>) -> Option<Vec<Executable>> {
         }
     }
     // clean up the rest of the opstack (until theres nothing left)
-    // could probably be a for loop but thats for later
     for this in opstack.iter().rev() {
         match this {
             Shunt::BOP(x) => exestack.push(Executable::BOP(*x)),
-            Shunt::PAO => return None, // this means that there is an unclosed set of parens
+            Shunt::PAO => return Err(ParseErr::UNCLOSED_PARENS), // this means that there is an unclosed set of parens
         }
     }
-    Some(exestack)
+    Ok(exestack)
 }
 
-fn eval(stack:&Vec<Executable>) -> Option<Value> {
+#[allow(non_camel_case_types)]
+enum ExecErr {
+    EMPTY,
+    TOO_FEW_ARGS,
+    NONSINGULAR,
+    BAD_CALCULATION,
+}
+
+fn eval(stack:&Vec<Executable>) -> Result<Value, ExecErr> {
     //evaluates a stack
-    //Executables *must* be in reverse polish notation 3 5 +
+    // all tokens *must* be in reverse polish notation 3 5 +
+    if stack.len() == 0 {
+        return Err(ExecErr::EMPTY)
+    }
     let mut evalvec:Vec<Value> = Vec::new();
     
     for op in stack.iter() {
         match op {
             Executable::LIT(x) => evalvec.push(*x),
             Executable::BOP(bop) => {
-                let tmp_1 = match evalvec.pop() {
+                let b = match evalvec.pop() {
                     Some(x) => x,
-                    None => {return None},
+                    None => {return Err(ExecErr::TOO_FEW_ARGS)},
                 };
-                let tmp_2 = match evalvec.pop() {
+                let a = match evalvec.pop() {
                     Some(x) => x,
-                    None => {return None},
+                    None => {return Err(ExecErr::TOO_FEW_ARGS)},
                 };
                 evalvec.push(match bop {
-                    Bop::ADD => tmp_1 + tmp_2,
-                    Bop::SUB => tmp_2 - tmp_1,
-                    Bop::MUL => tmp_1 * tmp_2,
-                    Bop::MOD => tmp_2 % tmp_1,
+                    Bop::ADD => a + b,
+                    Bop::SUB => a - b,
+                    Bop::MUL => a * b,
+                    Bop::MOD => a % b,
+                    Bop::DIV => a / b,
+                    Bop::EXP => a.pow(b as u32), 
                 })
             },
             Executable::NOP => (),
@@ -271,9 +347,9 @@ fn eval(stack:&Vec<Executable>) -> Option<Value> {
     }
     
     if evalvec.len() == 1 {
-        Some(evalvec[0])
+        Ok(evalvec[0])
     } else {
-        None
+        Err(ExecErr::NONSINGULAR)
     }
 }
 
@@ -283,20 +359,22 @@ fn main() {
     print!("\x1B[2J");
     loop {
         print!(">> ");
-        io::stdout().flush();
+        io::stdout().flush().unwrap();
 
         io::stdin()
             .read_line(&mut inp)
             .expect("Didnt get line :(");
 
-        let str_mach = StrMach::new(inp.clone());
-        let stack: Vec<Executable> = shunting(&lex_str(str_mach)).expect("Shunted badly :(");
+        let str_mach = StrMach::from(inp.clone());
+        let tokenized = lex_str(str_mach).expect("Failed to parse :(");
+
+        let stack: Vec<Executable> = shunting(&tokenized).expect("Shunted badly :(");
+
 
         let output = eval(&stack);
-
         match output {
-            Some(ans) => println!("= {}",ans),
-            None => println!("ERROR: failed to evaluate"),
+            Ok(ans) => println!("= {}",ans),
+            Err(_) => println!("ERROR: failed to evaluate"),
         };
         inp.clear();
     }
